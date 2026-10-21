@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>เกม 24 ออนไลน์</title>
+<style>
+:root{--bg:#f6f4ef;--card:#fff;--ink:#1d1d1f;--mut:#6b6b70;--acc:#e8590c;--acc2:#2b8a3e;--bad:#c92a2a;--line:#e3dfd6;--sel:#fff3e0;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#161618;--card:#232326;--ink:#f1f0ec;--mut:#9a9aa0;--acc:#ff922b;--acc2:#51cf66;--bad:#ff6b6b;--line:#38383d;--sel:#3a2a18;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans Thai","Sarabun",system-ui,sans-serif;min-height:100vh;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+#app{max-width:480px;margin:0 auto;padding:16px}
+h1{font-size:28px;margin:8px 0 4px;text-align:center}
+.sub{color:var(--mut);text-align:center;margin:0 0 16px;font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:12px}
+button{font:inherit;color:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);border-radius:12px;padding:12px 14px}
+button.p{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:700}
+button:disabled{opacity:.4;cursor:not-allowed}
+input,select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;width:100%}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.sc{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.chip{flex:1;min-width:80px;text-align:center;padding:8px;border-radius:12px;border:1px solid var(--line);background:var(--card);font-size:13px}
+.chip b{display:block;font-size:22px}
+.chip.on{border-color:var(--acc);background:var(--sel)}
+.chip.lk{opacity:.4}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}
+.tile{font-size:34px;font-weight:800;padding:22px 8px;border-radius:16px}
+.tile.sel{border-color:var(--acc);background:var(--sel);color:var(--acc)}
+.ops{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.op{font-size:26px;font-weight:700;padding:10px}
+.op.sel{border-color:var(--acc);background:var(--sel);color:var(--acc)}
+.msg{text-align:center;font-weight:700;margin:8px 0;min-height:24px}
+.ok{color:var(--acc2)}.no{color:var(--bad)}
+.timer{font-variant-numeric:tabular-nums;font-weight:800;color:var(--acc)}
+.big{font-size:56px;text-align:center}
+.code{font-size:44px;font-weight:800;letter-spacing:8px;text-align:center;color:var(--acc)}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const $=document.getElementById('app');
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SYM={'+':'+','-':'−','*':'×','/':'÷'};
+let peer=null,hostConn=null,conns=[],G=null,room=null,uid=null,isHost=false,code='',keySeen='',err='',myName='';
+let L={tiles:[],hist:[],sel:null,op:null,msg:'',cls:'',nid:10};
+
+function solve(a){
+  if(a.length==1)return Math.abs(a[0].v-24)<1e-6?a[0].e:null;
+  for(let i=0;i<a.length;i++)for(let j=i+1;j<a.length;j++){
+    const rest=a.filter((_,k)=>k!=i&&k!=j),x=a[i],y=a[j];
+    const c=[[x.v+y.v,`(${x.e}+${y.e})`],[x.v*y.v,`(${x.e}×${y.e})`],[x.v-y.v,`(${x.e}−${y.e})`],[y.v-x.v,`(${y.e}−${x.e})`]];
+    if(Math.abs(y.v)>1e-9)c.push([x.v/y.v,`(${x.e}÷${y.e})`]);
+    if(Math.abs(x.v)>1e-9)c.push([y.v/x.v,`(${y.e}÷${x.e})`]);
+    for(const[v,e]of c){const r=solve([...rest,{v,e}]);if(r)return r}
+  }
+  return null;
+}
+const strip=s=>s.startsWith('(')&&s.endsWith(')')?s.slice(1,-1):s;
+function fmt(v){
+  if(Math.abs(v-Math.round(v))<1e-9)return String(Math.round(v));
+  for(let d=2;d<=60;d++)if(Math.abs(v*d-Math.round(v*d))<1e-9)return Math.round(v*d)+'/'+d;
+  return v.toFixed(2);
+}
+function genNums(){let n;do{n=Array.from({length:4},()=>1+Math.floor(Math.random()*10))}while(!solve(n.map(v=>({v,e:String(v)}))));return n}
+const solOf=n=>strip(solve(n.map(v=>({v,e:String(v)}))));
+const nm=id=>(room&&room.players&&room.players[id]&&room.players[id].name)||'ผู้เล่น';
+function resetTiles(){L.tiles=room.nums.map((v,i)=>({id:i,v,e:String(v)}));L.sel=null;L.op=null;L.hist=[]}
+
+/* ---------- network ---------- */
+function setRoom(g){
+  room=g;room.recvAt=Date.now();
+  const k=g.round+'-'+g.attempt+'-'+g.active;
+  if(k!==keySeen){keySeen=k;L.msg='';L.cls='';if(g.nums&&g.nums.length)resetTiles()}
+  render();
+}
+function broadcast(){
+  G.left=G.active?G.deadline-Date.now():0;
+  const snap=JSON.parse(JSON.stringify(G));
+  conns.forEach(c=>{if(c.open)c.send({t:'state',g:snap})});
+  setRoom(snap);
+}
+function act(m){if(isHost)hostApply('host',m);else if(hostConn&&hostConn.open)hostConn.send(m)}
+
+function createRoom(){
+  myName=document.getElementById('nm').value.trim()||'ผู้เล่น';
+  code=Array.from({length:4},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random()*24)]).join('');
+  err='กำลังสร้างห้อง…';render();
+  peer=new Peer('g24-'+code);
+  peer.on('open',()=>{
+    isHost=true;uid='host';err='';
+    G={host:'host',status:'lobby',target:5,round:0,attempt:0,nums:[],active:null,deadline:0,locked:[],roundDone:false,sol:'',solver:null,winner:null,players:{host:{name:myName}},scores:{host:0}};
+    broadcast();
+  });
+  peer.on('connection',c=>{
+    conns.push(c);
+    c.on('data',m=>hostApply(c.peer,m));
+    c.on('close',()=>{conns=conns.filter(x=>x!==c);dropPlayer(c.peer)});
+  });
+  peer.on('error',e=>{if(e.type==='unavailable-id'){peer.destroy();createRoom()}else{err='เชื่อมต่อไม่ได้ ('+e.type+')';room=null;render()}});
+}
+function joinRoom(){
+  myName=document.getElementById('nm').value.trim()||'ผู้เล่น';
+  code=document.getElementById('cd').value.trim().toUpperCase();
+  if(code.length!==4){err='ใส่รหัสห้อง 4 ตัวอักษร';render();return}
+  err='กำลังเข้าห้อง…';render();
+  peer=new Peer();
+  peer.on('open',id=>{
+    uid=id;
+    hostConn=peer.connect('g24-'+code,{reliable:true});
+    hostConn.on('open',()=>{err='';hostConn.send({t:'join',name:myName})});
+    hostConn.on('data',m=>{if(m.t==='state')setRoom(m.g)});
+    hostConn.on('close',()=>{room=null;err='เจ้าห้องออกจากเกมแล้ว';cleanup();render()});
+  });
+  peer.on('error',e=>{err=e.type==='peer-unavailable'?'ไม่พบห้อง '+code:'เชื่อมต่อไม่ได้ ('+e.type+')';room=null;render()});
+}
+function cleanup(){if(peer)peer.destroy();peer=null;hostConn=null;conns=[];G=null;room=null;isHost=false;keySeen=''}
+function leave(){cleanup();err='';render()}
+
+/* ---------- host logic ---------- */
+function newRound(){G.round++;G.attempt=0;G.nums=genNums();G.active=null;G.locked=[];G.roundDone=false;G.sol='';G.solver=null}
+function lock(id){
+  G.locked=[...G.locked.filter(x=>x!==id),id];G.active=null;G.attempt++;
+  if(G.locked.length>=Object.keys(G.players).length){G.roundDone=true;G.sol=solOf(G.nums);G.solver=null}
+}
+function dropPlayer(id){
+  if(!G||!G.players[id])return;
+  delete G.players[id];delete G.scores[id];G.locked=G.locked.filter(x=>x!==id);
+  if(G.active===id){G.active=null;G.attempt++}
+  broadcast();
+}
+function hostApply(from,m){
+  const g=G,play=g.status==='play';
+  if(m.t==='join'){g.players[from]={name:String(m.name||'ผู้เล่น').slice(0,12)};g.scores[from]=g.scores[from]||0}
+  else if(m.t==='claim'){if(play&&!g.active&&!g.roundDone&&!g.locked.includes(from)){g.active=from;g.deadline=Date.now()+30000}}
+  else if(m.t==='giveup'){if(g.active===from)lock(from)}
+  else if(m.t==='solved'){if(g.active===from){g.scores[from]++;g.roundDone=true;g.sol=String(m.expr).slice(0,80);g.solver=from;g.active=null;if(g.scores[from]>=g.target){g.status='win';g.winner=from}}}
+  else if(m.t==='reveal'){if(play&&!g.active&&!g.roundDone){g.roundDone=true;g.sol=solOf(g.nums);g.solver=null}}
+  else if(m.t==='next'){if(play&&g.roundDone)newRound()}
+  else if(m.t==='start'&&from==='host'){g.target=+m.target||5;g.status='play';Object.keys(g.players).forEach(i=>g.scores[i]=0);g.winner=null;g.round=0;newRound()}
+  else if(m.t==='lobby'&&from==='host'){g.status='lobby';g.active=null}
+  broadcast();
+}
+setInterval(()=>{
+  if(isHost&&G&&G.status==='play'&&G.active&&Date.now()>G.deadline){lock(G.active);broadcast();return}
+  if(room&&room.active){const e=document.getElementById('tm');if(e)e.textContent=leftSec()}
+},500);
+const leftSec=()=>Math.max(Math.ceil((room.left-(Date.now()-room.recvAt))/1000),0);
+
+/* ---------- play ---------- */
+function tapTile(id){
+  if(room.active!==uid)return;
+  if(L.sel===null||!L.op){L.sel=L.sel===id?null:id;if(L.sel===null)L.op=null;render();return}
+  if(L.sel===id){L.sel=null;L.op=null;render();return}
+  const a=L.tiles.find(t=>t.id==L.sel),b=L.tiles.find(t=>t.id==id);
+  if(L.op=='/'&&Math.abs(b.v)<1e-9){L.msg='หารด้วย 0 ไม่ได้';L.cls='no';render();return}
+  const v=L.op=='+'?a.v+b.v:L.op=='-'?a.v-b.v:L.op=='*'?a.v*b.v:a.v/b.v;
+  L.hist.push(L.tiles.slice());
+  L.tiles=L.tiles.filter(t=>t.id!=a.id&&t.id!=b.id);
+  L.tiles.push({id:L.nid++,v,e:`(${a.e}${SYM[L.op]}${b.e})`});
+  L.sel=null;L.op=null;L.msg='';L.cls='';
+  if(L.tiles.length==1){
+    if(Math.abs(L.tiles[0].v-24)<1e-6){act({t:'solved',expr:strip(L.tiles[0].e)});return}
+    L.msg=`ได้ ${fmt(L.tiles[0].v)} ไม่ใช่ 24 ลองเลิกทำ`;L.cls='no';
+  }
+  render();
+}
+function undo(){if(L.hist.length){L.tiles=L.hist.pop();L.sel=null;L.op=null;L.msg='';render()}}
+function setOp(o){if(L.sel!==null){L.op=L.op==o?null:o;render()}}
+function start(){act({t:'start',target:document.getElementById('tg').value})}
+
+/* ---------- ui ---------- */
+function render(){
+  if(!room){
+    $.innerHTML=`<h1>🎯 เกม 24 ออนไลน์</h1><p class="sub">เล่นกับเพื่อนคนละเครื่อง ไม่ต้องล็อกอิน</p>
+    <div class="card"><b>ชื่อของคุณ</b><input id="nm" maxlength="12" value="${esc(myName)}" placeholder="เช่น มิ้นท์" style="margin-top:8px"></div>
+    <button class="p" style="width:100%;font-size:18px" onclick="createRoom()">สร้างห้องใหม่</button>
+    <div class="card" style="margin-top:12px"><b>มีรหัสห้องแล้ว?</b><div class="row" style="margin-top:8px"><input id="cd" maxlength="4" placeholder="ABCD" style="text-transform:uppercase"><button onclick="joinRoom()">เข้าห้อง</button></div></div>
+    <div class="msg no">${esc(err)}</div>`;
+    return;
+  }
+  const ids=Object.keys(room.players),host=isHost;
+  if(room.status==='lobby'){
+    $.innerHTML=`<h1>ห้องรอเล่น</h1><p class="sub">ให้เพื่อนเปิดลิงก์นี้แล้วใส่รหัสห้อง</p><div class="code">${esc(code)}</div>
+    <div class="card" style="margin-top:12px"><b>ผู้เล่น (${ids.length})</b>${ids.map(i=>`<div style="padding:6px 0">${esc(nm(i))}${i==='host'?' 👑':''}${i===uid?' (คุณ)':''}</div>`).join('')}</div>
+    ${host?`<div class="card"><b>เล่นถึงกี่คะแนน</b><select id="tg" style="margin-top:8px">${[3,5,7,10].map(n=>`<option value="${n}"${n==room.target?' selected':''}>${n} คะแนน</option>`).join('')}</select></div><button class="p" style="width:100%;font-size:18px" onclick="start()">เริ่มเกม</button>`:'<p class="sub">รอเจ้าห้องกดเริ่มเกม…</p>'}
+    <button style="width:100%;margin-top:12px" onclick="leave()">ออกจากห้อง</button>`;
+    return;
+  }
+  const sc=`<div class="sc">${ids.map(i=>`<div class="chip${room.active===i?' on':''}${room.locked.includes(i)?' lk':''}">${esc(nm(i))}${i===uid?' ★':''}<b>${room.scores[i]||0}</b></div>`).join('')}</div>`;
+  if(room.status==='win'){
+    $.innerHTML=`<div class="card" style="margin-top:30px"><div class="big">🏆</div><h1>${esc(nm(room.winner))} ชนะ!</h1><div style="margin-top:16px">${sc}</div>
+    ${host?`<button class="p" style="width:100%" onclick="act({t:'lobby'})">เล่นอีกครั้ง</button>`:'<p class="sub">รอเจ้าห้องเริ่มเกมใหม่…</p>'}
+    <button style="width:100%;margin-top:8px" onclick="leave()">ออกจากห้อง</button></div>`;
+    return;
+  }
+  const mine=room.active===uid;
+  const nums=mine?L.tiles:room.nums.map((v,i)=>({id:i,v}));
+  const tiles=`<div class="tiles">${nums.map(t=>`<button class="tile${L.sel===t.id&&mine?' sel':''}" ${mine?'':'disabled'} onclick="tapTile(${t.id})">${fmt(t.v)}</button>`).join('')}</div>`;
+  const ops=`<div class="ops">${['+','-','*','/'].map(o=>`<button class="op${L.op==o?' sel':''}" ${mine&&L.sel!==null?'':'disabled'} onclick="setOp('${o}')">${SYM[o]}</button>`).join('')}</div>`;
+  let head='',msg=L.msg,cls=L.cls,ctl='';
+  if(room.roundDone){
+    msg=room.solver?`🎉 ${nm(room.solver)} ได้ 24: ${room.sol}`:`เฉลย: ${room.sol} = 24`;cls=room.solver?'ok':'';
+    ctl=`<button class="p" style="width:100%" onclick="act({t:'next'})">รอบถัดไป</button>`;
+  }else if(room.active){
+    head=`<div class="msg">ตาของ ${esc(nm(room.active))}${mine?' (คุณ)':''} · เหลือ <span class="timer" id="tm">${leftSec()}</span> วิ</div>`;
+    ctl=mine?`<div class="row"><button style="flex:1" onclick="undo()">↶ เลิกทำ</button><button style="flex:1" onclick="resetTiles();L.msg='';render()">เริ่มใหม่</button><button style="flex:1" onclick="act({t:'giveup'})">ยอมแพ้</button></div>`:'';
+  }else{
+    const lk=room.locked.includes(uid);
+    msg=lk?'คุณหมดสิทธิ์รอบนี้ รอเพื่อนลอง':(room.locked.length?'เปิดให้คนอื่นลองต่อ!':'ใครเห็นคำตอบก่อน กดปุ่มเลย!');
+    ctl=`<button class="p" style="width:100%;font-size:20px" ${lk?'disabled':''} onclick="act({t:'claim'})">✋ ฉันแก้ได้!</button><button style="width:100%;margin-top:8px" onclick="act({t:'reveal'})">ไม่มีใครแก้ได้ ดูเฉลย</button>`;
+  }
+  $.innerHTML=`<h1>🎯 เกม 24</h1><p class="sub">ห้อง ${esc(code)} · ถึง ${room.target} คะแนนชนะ · รอบที่ ${room.round}</p>${sc}${head}${tiles}${ops}<div class="msg ${cls}">${esc(msg)}</div>${ctl}
+  <button style="width:100%;margin-top:8px;font-size:13px;color:var(--mut)" onclick="leave()">ออกจากห้อง</button>`;
+}
+render();
+</script>
+</body>
+</html>
